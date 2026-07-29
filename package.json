@@ -1,0 +1,29 @@
+{
+  "name": "private-ai-organization",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build -w @private-ai-org/core && concurrently -k -n server,web -c blue,magenta \"npm run dev -w @private-ai-org/server\" \"npm run dev -w @private-ai-org/web\"",
+    "dev:board": "langgraphjs dev --no-browser --host 127.0.0.1 --port 2024 --config ./langgraph.json",
+    "dev:chat-ui": "pnpm --dir .upstream/agent-chat-ui dev --hostname 127.0.0.1 --port 3000",
+    "dev:chat": "npm run build -w @private-ai-org/core && npm run build -w @private-ai-org/server && concurrently -k -n northstar,graph,chat -c blue,green,magenta \"npm run start -w @private-ai-org/server\" \"npm run dev:board\" \"npm run dev:chat-ui\"",
+    "hermes:smoke": "npm run build -w @private-ai-org/core && npm run build -w @private-ai-org/server && node ./scripts/hermes-live.mjs smoke",
+    "dev:live": "node ./scripts/hermes-live.mjs company",
+    "build": "npm run build -w @private-ai-org/core && npm run build -w @private-ai-org/server && npm run build -w @private-ai-org/web",
+    "typecheck": "npm run build -w @private-ai-org/core && npm run typecheck -w @private-ai-org/core && npm run typecheck -w @private-ai-org/server && npm run typecheck -w @private-ai-org/web",
+    "test": "npm run build -w @private-ai-org/core && npm run build -w @private-ai-org/server && npm run test -w @private-ai-org/core && npm run test -w @private-ai-org/server",
+    "start": "npm run build -w @private-ai-org/core && npm run build -w @private-ai-org/server && npm run start -w @private-ai-org/server"
+  },
+  "devDependencies": {
+    "@langchain/langgraph-cli": "^1.4.2",
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

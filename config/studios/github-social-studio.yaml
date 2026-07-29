@@ -1,0 +1,128 @@
+version: 1
+
+studio:
+  id: github-social-studio
+  name: GitHub Signal Studio
+  purpose: >-
+    Discover genuinely surprising open-source projects, prove a narrow claim from
+    each project in isolation, and deliver truthful, edit-ready source material.
+  cadence:
+    interval_hours: 48
+    timezone: Asia/Shanghai
+    automatic_external_actions: false
+
+roles:
+  producer:
+    agent_id: agent-mira
+    responsibility: Select the smallest viable project pod and prepare the Board decision packet.
+  scout:
+    agent_id: agent-iris
+    responsibility: Discover candidates and produce evidence-backed candidate cards.
+  verifier:
+    agent_id: agent-theo
+    responsibility: Prove or falsify one explicit README claim through the Codex Broker.
+  capture_producer:
+    agent_id: agent-lyra
+    responsibility: Turn a passed verification into screen, terminal, and source-media shot lists.
+  editorial_reviewer:
+    agent_id: agent-sage
+    responsibility: Score novelty, audience pull, truthfulness, and reuse value independently.
+
+candidate_pool:
+  sources:
+    - github_recent_search
+    - github_trending_snapshot
+    - maintainer_release_feeds
+    - board_curated_watchlist
+  per_cycle:
+    metadata_candidates: 30
+    deep_reviews: 8
+    sandbox_trials: 2
+    production_candidates: 1
+  scorecard:
+    novelty: 0.30
+    demo_clarity: 0.25
+    claim_testability: 0.20
+    audience_pull: 0.15
+    maintenance_health: 0.10
+  hard_rejections:
+    - archived_or_abandoned
+    - unclear_license
+    - credential_harvesting_or_crypto_mining_signals
+    - no_narrow_testable_claim
+    - requires_unscoped_personal_credentials
+
+verification:
+  evidence_first: true
+  claim_contract:
+    required_fields:
+      - exact_commit_sha
+      - claim_to_prove
+      - reproduction_steps
+      - expected_observable_result
+      - sandbox_profile
+      - risk_level
+  required_artifacts:
+    - candidate_card.md
+    - README-claim.md
+    - environment-manifest.json
+    - command-log.redacted.txt
+    - verification-report.md
+    - screenshots
+    - test-video.webm
+  pass_rule: >-
+    A project passes only if the observed result is reproducible from the recorded
+    commit and the report separates verified behaviour from unverified README claims.
+
+sandbox:
+  execution_boundary: disposable_linux_workspace
+  host_mounts: none
+  host_credentials: forbidden
+  privileged_mode: forbidden
+  network: allowlist_only
+  secret_delivery: broker_scoped_injection
+  default_limits:
+    max_runtime_minutes: 20
+    max_memory_mb: 4096
+    max_disk_gb: 12
+    max_concurrent_trials: 1
+  escalation:
+    - a project asks for a new provider key
+    - a project needs a public callback, OAuth, payment, or social login
+    - a project needs privileged containers, host networking, or a host mount
+    - a project tries to publish, message, purchase, or mutate an external account
+
+capture:
+  terminal:
+    primary: charmbracelet-vhs
+    fallback: asciinema
+  browser:
+    primary: playwright-cli
+    format: webm
+  screen_demo:
+    primary: playwright
+    requirements:
+      - show_the_actual_passing_flow
+      - include_one_short_failure_or_constraint_when_material
+      - keep_sensitive_values_out_of_frame
+  video_composition:
+    primary: OpenMontage
+    mode: handoff_only
+    note: >-
+      OpenMontage is a downstream production tool. It receives only the verified
+      evidence pack and a Board-supplied editing template; it is not proof that a
+      GitHub project works.
+
+delivery:
+  board_packet:
+    - top_three_candidate_cards
+    - one_recommended_trial
+    - risk_and_cost_estimate
+  editor_pack:
+    - 15_to_45_second_screen_demo
+    - terminal_clip
+    - 3_to_6_clean_screenshots
+    - concise_fact_sheet
+    - shot_list.md
+    - sources_and_license_notes.md
+  publish_policy: board_approval_required

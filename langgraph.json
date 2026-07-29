@@ -1,0 +1,6 @@
+{
+  "node_version": "24",
+  "graphs": {
+    "board": "./apps/server/src/board-chat-agent.ts:graph"
+  }
+}
