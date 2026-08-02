@@ -1,12 +1,12 @@
-import type { CompanyPlan, OrchestrationRun } from "@private-ai-org/core";
+import type { OrchestrationRun, StudioCompanyPlan } from "@private-ai-org/core";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { OrganizationRepository } from "../../infrastructure/database.js";
 import type { AgentRuntimePort } from "./agent-runtime-port.js";
 import {
   COMPANY_GRAPH_NAME,
   COMPANY_GRAPH_VERSION,
-  companyPlanFromGraphState,
-  createCompanyGraph
+  createCompanyGraph,
+  studioPlanFromGraphState
 } from "./company-graph.js";
 
 export class CompanyOrchestrator {
@@ -35,6 +35,21 @@ export class CompanyOrchestrator {
     if (existing?.status === "failed") {
       throw new Error(`Company orchestration already failed: ${existing.summary ?? "no error detail"}`);
     }
+    if (
+      existing
+      && (
+        existing.graphName !== COMPANY_GRAPH_NAME
+        || existing.graphVersion !== COMPANY_GRAPH_VERSION
+      )
+    ) {
+      const message = [
+        `Cannot resume ${existing.graphName}@${existing.graphVersion}`,
+        `with ${COMPANY_GRAPH_NAME}@${COMPANY_GRAPH_VERSION};`,
+        "the durable orchestration must be retried as a new board directive."
+      ].join(" ");
+      this.repository.failOrchestration(existing.id, message);
+      throw new Error(message);
+    }
 
     const orchestration = existing ?? this.repository.createOrchestration(
       rootTaskId,
@@ -45,15 +60,44 @@ export class CompanyOrchestrator {
     try {
       const task = this.repository.getTask(rootTaskId);
       const dashboard = this.repository.getDashboard();
+      const ceos = dashboard.agents.filter(
+        (agent) => agent.managerAgentId === null && agent.teamId === null
+      );
+      if (ceos.length !== 1) {
+        throw new Error(`The Studio planner requires exactly one CEO profile; found ${ceos.length}`);
+      }
+      const ceo = ceos[0];
+      if (!ceo) throw new Error("The Studio planner CEO profile disappeared");
+      const availableStudios = dashboard.studios
+        .map((snapshot) => snapshot.studio)
+        .filter((studio) => studio.status !== "retired");
+      if (availableStudios.length < 1 || availableStudios.length > 3) {
+        throw new Error(
+          `The Studio planner requires one through three non-retired Studios; found ${availableStudios.length}`
+        );
+      }
+      const legacyTeam = task.teamId
+        ? dashboard.teams.find((team) => team.id === task.teamId)
+        : null;
+      const preferredStudioId = task.studioId ?? (
+        legacyTeam
+          ? availableStudios.find(
+              (studio) => studio.managerAgentId === legacyTeam.leadAgentId
+            )?.id ?? null
+          : null
+      );
       const state = await this.graph.invoke({
         orchestrationId: orchestration.id,
         rootTaskId,
         title: task.title,
         brief: task.brief,
         risk: task.risk,
-        preferredTeamId: task.teamId,
-        teams: dashboard.teams.map(({ id, name, purpose, leadAgentId, sortOrder }) => ({
-          id, name, purpose, leadAgentId, sortOrder
+        ceoAgentId: ceo.id,
+        preferredStudioId,
+        studios: availableStudios.map(({
+          id, key, name, purpose, managerAgentId, sortOrder, status
+        }) => ({
+          id, key, name, purpose, managerAgentId, sortOrder, status
         })),
         agents: dashboard.agents.map(({
           id, teamId, managerAgentId, name, title, role, responsibilities, runtimeProfile
@@ -64,10 +108,11 @@ export class CompanyOrchestrator {
         configurable: { thread_id: orchestration.langgraphThreadId },
         recursionLimit: 12
       });
-      const plan: CompanyPlan = {
+      const plan: StudioCompanyPlan = {
+        planningModel: "studio-v1",
         orchestrationId: orchestration.id,
         rootTaskId,
-        departments: companyPlanFromGraphState(state),
+        studios: studioPlanFromGraphState(state),
         summary: state.summary
       };
       this.repository.completeOrchestration(orchestration.id, plan);

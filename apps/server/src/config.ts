@@ -13,6 +13,14 @@ export interface AppConfig {
   hermesProfileEndpoints: Record<string, { baseUrl: string; apiKey: string }>;
   hermesMultiplexEndpoint: { baseUrl: string; apiKey: string } | undefined;
   hermesPollIntervalMs: number;
+  vmwareFusion: {
+    vmrunExecutablePath: string;
+    studioId: string;
+    studioInstanceId: string;
+    vmxPath: string;
+    actionsArmed: boolean;
+    actionsArmedUntil: string | null;
+  } | undefined;
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {
@@ -47,6 +55,88 @@ function parseProfileEndpoints(value: string | undefined): Record<string, { base
   return endpoints;
 }
 
+export function parseVmwareFusionConfig(
+  environment: Record<string, string | undefined>,
+  now: () => Date = () => new Date()
+): AppConfig["vmwareFusion"] {
+  const actionsArmedValue = environment.VMWARE_FUSION_ACTIONS_ARMED?.trim();
+  if (
+    actionsArmedValue !== undefined
+    && actionsArmedValue !== ""
+    && actionsArmedValue !== "true"
+    && actionsArmedValue !== "false"
+  ) {
+    throw new Error(
+      "VMWARE_FUSION_ACTIONS_ARMED must be exactly true or false"
+    );
+  }
+  const actionsArmed = actionsArmedValue === "true";
+  const actionsArmedUntilValue =
+    environment.VMWARE_FUSION_ACTIONS_ARMED_UNTIL?.trim() || null;
+  const entries = {
+    vmrunExecutablePath: environment.VMWARE_FUSION_VMRUN_PATH?.trim(),
+    studioId: environment.VMWARE_FUSION_STUDIO_ID?.trim(),
+    studioInstanceId: environment.VMWARE_FUSION_INSTANCE_ID?.trim(),
+    vmxPath: environment.VMWARE_FUSION_VMX_PATH?.trim()
+  };
+  const configured = Object.values(entries).filter(Boolean).length;
+  if (configured === 0) {
+    if (actionsArmed || actionsArmedUntilValue) {
+      throw new Error(
+        "VMware Fusion actions cannot be armed without one complete configured target"
+      );
+    }
+    return undefined;
+  }
+  if (configured !== Object.keys(entries).length) {
+    throw new Error(
+      "VMware Fusion lifecycle requires VMRUN_PATH, STUDIO_ID, INSTANCE_ID, and VMX_PATH together"
+    );
+  }
+  if (!actionsArmed && actionsArmedUntilValue) {
+    throw new Error(
+      "VMWARE_FUSION_ACTIONS_ARMED_UNTIL requires ACTIONS_ARMED=true"
+    );
+  }
+  let actionsArmedUntil: string | null = null;
+  if (actionsArmed) {
+    if (!actionsArmedUntilValue) {
+      throw new Error(
+        "VMWARE_FUSION_ACTIONS_ARMED=true requires ACTIONS_ARMED_UNTIL"
+      );
+    }
+    const deadlineMs = Date.parse(actionsArmedUntilValue);
+    const nowMs = now().getTime();
+    if (!Number.isFinite(deadlineMs)) {
+      throw new Error(
+        "VMWARE_FUSION_ACTIONS_ARMED_UNTIL must be a valid timestamp"
+      );
+    }
+    if (!Number.isFinite(nowMs)) {
+      throw new Error("Northstar cannot evaluate the VMware action window");
+    }
+    if (deadlineMs <= nowMs) {
+      throw new Error(
+        "VMWARE_FUSION_ACTIONS_ARMED_UNTIL must be in the future"
+      );
+    }
+    if (deadlineMs - nowMs > 30 * 60_000) {
+      throw new Error(
+        "VMware Fusion action window must not exceed 30 minutes"
+      );
+    }
+    actionsArmedUntil = new Date(deadlineMs).toISOString();
+  }
+  return {
+    ...(entries as Omit<
+      NonNullable<AppConfig["vmwareFusion"]>,
+      "actionsArmed" | "actionsArmedUntil"
+    >),
+    actionsArmed,
+    actionsArmedUntil
+  };
+}
+
 try {
   process.loadEnvFile(path.join(projectRoot, ".env"));
 } catch (error) {
@@ -75,6 +165,7 @@ export function loadConfig(cwd = projectRoot): AppConfig {
     hermesMultiplexEndpoint: multiplexBaseUrl && multiplexApiKey
       ? { baseUrl: multiplexBaseUrl, apiKey: multiplexApiKey }
       : undefined,
-    hermesPollIntervalMs: positiveInteger(process.env.HERMES_POLL_INTERVAL_MS, 500)
+    hermesPollIntervalMs: positiveInteger(process.env.HERMES_POLL_INTERVAL_MS, 500),
+    vmwareFusion: parseVmwareFusionConfig(process.env)
   };
 }

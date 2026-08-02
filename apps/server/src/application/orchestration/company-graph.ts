@@ -1,4 +1,9 @@
-import type { Agent, DepartmentPlan, RiskLevel, Team } from "@private-ai-org/core";
+import type {
+  Agent,
+  RiskLevel,
+  Studio,
+  StudioMissionPlan
+} from "@private-ai-org/core";
 import {
   END,
   ReducedValue,
@@ -12,14 +17,16 @@ import { z } from "zod/v4";
 import type { AgentRuntimePort } from "./agent-runtime-port.js";
 
 export const COMPANY_GRAPH_NAME = "northstar-company";
-export const COMPANY_GRAPH_VERSION = "1";
+export const COMPANY_GRAPH_VERSION = "2";
 
-const graphTeamSchema = z.object({
+const graphStudioSchema = z.object({
   id: z.string(),
+  key: z.string(),
   name: z.string(),
   purpose: z.string(),
-  leadAgentId: z.string(),
-  sortOrder: z.number()
+  managerAgentId: z.string(),
+  sortOrder: z.number(),
+  status: z.enum(["draft", "ready", "active", "suspended", "retired"])
 });
 
 const graphAgentSchema = z.object({
@@ -33,30 +40,32 @@ const graphAgentSchema = z.object({
   runtimeProfile: z.string().nullable()
 });
 
-const departmentRouteSchema = z.object({
-  teamId: z.string(),
+const studioRouteSchema = z.object({
+  studioId: z.string(),
   managerAgentId: z.string(),
   missionTitle: z.string().min(1).max(180),
   missionBrief: z.string().min(1).max(8_000)
 });
 
-const workerAssignmentSchema = z.object({
-  agentId: z.string(),
+const temporaryWorkerSchema = z.object({
+  key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  kind: z.enum(["workflow", "subagent", "sandbox"]),
+  role: z.string().min(1).max(120),
   title: z.string().min(1).max(180),
   brief: z.string().min(1).max(8_000),
   acceptanceCriteria: z.array(z.string().min(1).max(1_000)).min(1).max(8)
 });
 
-const departmentPlanSchema = departmentRouteSchema.extend({
-  workerAssignments: z.array(workerAssignmentSchema).min(1).max(4)
+const studioPlanSchema = studioRouteSchema.extend({
+  temporaryWorkers: z.array(temporaryWorkerSchema).max(4)
 });
 
 const ceoResponseSchema = z.object({
-  departments: z.array(departmentRouteSchema).min(1).max(3)
+  studios: z.array(studioRouteSchema).min(1).max(3)
 });
 
 const managerResponseSchema = z.object({
-  workerAssignments: z.array(workerAssignmentSchema).min(1).max(4)
+  temporaryWorkers: z.array(temporaryWorkerSchema).max(4)
 });
 
 const CompanyState = new StateSchema({
@@ -65,15 +74,16 @@ const CompanyState = new StateSchema({
   title: z.string(),
   brief: z.string(),
   risk: z.enum(["green", "yellow", "red"]),
-  preferredTeamId: z.string().nullable().default(null),
-  teams: z.array(graphTeamSchema),
+  ceoAgentId: z.string(),
+  preferredStudioId: z.string().nullable().default(null),
+  studios: z.array(graphStudioSchema).min(1).max(3),
   agents: z.array(graphAgentSchema),
-  routes: z.array(departmentRouteSchema).default(() => []),
-  activeRoute: departmentRouteSchema.nullable().default(null),
-  departmentPlans: new ReducedValue(
-    z.array(departmentPlanSchema).default(() => []),
+  routes: z.array(studioRouteSchema).default(() => []),
+  activeRoute: studioRouteSchema.nullable().default(null),
+  studioPlans: new ReducedValue(
+    z.array(studioPlanSchema).default(() => []),
     {
-      inputSchema: departmentPlanSchema,
+      inputSchema: studioPlanSchema,
       reducer: (current, next) => [...current, next]
     }
   ),
@@ -86,8 +96,12 @@ export interface CompanyGraphInput {
   title: string;
   brief: string;
   risk: RiskLevel;
-  preferredTeamId: string | null;
-  teams: Array<Pick<Team, "id" | "name" | "purpose" | "leadAgentId" | "sortOrder">>;
+  ceoAgentId: string;
+  preferredStudioId: string | null;
+  studios: Array<Pick<
+    Studio,
+    "id" | "key" | "name" | "purpose" | "managerAgentId" | "sortOrder" | "status"
+  >>;
   agents: Array<Pick<Agent, "id" | "teamId" | "managerAgentId" | "name" | "title" | "role" | "responsibilities" | "runtimeProfile">>;
 }
 
@@ -120,38 +134,34 @@ function agentFromState(state: typeof CompanyState.State, agentId: string): Agen
   };
 }
 
-function validateRoutes(state: typeof CompanyState.State, routes: z.infer<typeof departmentRouteSchema>[]) {
-  const seenTeams = new Set<string>();
+function validateRoutes(state: typeof CompanyState.State, routes: z.infer<typeof studioRouteSchema>[]) {
+  const seenStudios = new Set<string>();
   for (const route of routes) {
-    if (seenTeams.has(route.teamId)) throw new Error(`CEO routed the same team twice: ${route.teamId}`);
-    seenTeams.add(route.teamId);
-    const team = state.teams.find((candidate) => candidate.id === route.teamId);
-    if (!team || team.leadAgentId !== route.managerAgentId) {
-      throw new Error(`CEO route does not match the durable organization: ${route.teamId}`);
+    if (seenStudios.has(route.studioId)) {
+      throw new Error(`CEO routed the same Studio twice: ${route.studioId}`);
+    }
+    seenStudios.add(route.studioId);
+    const studio = state.studios.find((candidate) => candidate.id === route.studioId);
+    if (!studio || studio.managerAgentId !== route.managerAgentId || studio.status === "retired") {
+      throw new Error(`CEO route does not match the durable Studio registry: ${route.studioId}`);
     }
   }
 }
 
-function validateAssignments(
-  state: typeof CompanyState.State,
-  route: z.infer<typeof departmentRouteSchema>,
-  assignments: z.infer<typeof workerAssignmentSchema>[]
-) {
-  const seenWorkers = new Set<string>();
-  for (const assignment of assignments) {
-    if (seenWorkers.has(assignment.agentId)) throw new Error(`Manager assigned one worker twice: ${assignment.agentId}`);
-    seenWorkers.add(assignment.agentId);
-    const worker = state.agents.find((candidate) => candidate.id === assignment.agentId);
-    if (!worker || worker.teamId !== route.teamId || worker.managerAgentId !== route.managerAgentId) {
-      throw new Error(`${assignment.agentId} is not a direct report of ${route.managerAgentId}`);
+function validateTemporaryWorkers(workers: z.infer<typeof temporaryWorkerSchema>[]) {
+  const seenKeys = new Set<string>();
+  for (const worker of workers) {
+    if (seenKeys.has(worker.key)) {
+      throw new Error(`Manager described the same temporary worker twice: ${worker.key}`);
     }
+    seenKeys.add(worker.key);
   }
 }
 
 export function createCompanyGraph(runtime: AgentRuntimePort, checkpointer: BaseCheckpointSaver) {
   const ceoRoute = async (state: typeof CompanyState.State) => {
-    const ceo = state.agents.find((agent) => agent.managerAgentId === null && agent.teamId === null);
-    if (!ceo) throw new Error("The organization needs exactly one root CEO profile");
+    const ceo = state.agents.find((agent) => agent.id === state.ceoAgentId);
+    if (!ceo) throw new Error("The organization needs one configured CEO profile");
     const result = await runtime.execute({
       idempotencyKey: `${state.orchestrationId}:ceo-route:${ceo.id}`,
       orchestrationId: state.orchestrationId,
@@ -160,18 +170,18 @@ export function createCompanyGraph(runtime: AgentRuntimePort, checkpointer: Base
       mode: "route",
       brief: `${state.title}\n\n${state.brief}`,
       instructions: [
-        "Route this board directive to one through three department managers.",
-        "Use only the team and manager IDs supplied in context.",
-        "Return JSON only: {\"departments\":[{\"teamId\":\"...\",\"managerAgentId\":\"...\",\"missionTitle\":\"...\",\"missionBrief\":\"...\"}]}"
+        "Route this board directive to one through three Studio managers.",
+        "Use only the Studio and manager IDs supplied in context.",
+        "Return JSON only: {\"studios\":[{\"studioId\":\"...\",\"managerAgentId\":\"...\",\"missionTitle\":\"...\",\"missionBrief\":\"...\"}]}"
       ].join("\n"),
       context: {
-        preferredTeamId: state.preferredTeamId,
-        teams: state.teams
+        preferredStudioId: state.preferredStudioId,
+        studios: state.studios
       }
     });
     const response = ceoResponseSchema.parse(parseJsonObject(result.output));
-    validateRoutes(state, response.departments);
-    return { routes: response.departments };
+    validateRoutes(state, response.studios);
+    return { routes: response.studios };
   };
 
   const fanOutToManagers = (state: typeof CompanyState.State) => state.routes.map((route) => new Send(
@@ -181,9 +191,10 @@ export function createCompanyGraph(runtime: AgentRuntimePort, checkpointer: Base
 
   const managerPlan = async (state: typeof CompanyState.State) => {
     const route = state.activeRoute;
-    if (!route) throw new Error("Manager planning requires an active department route");
+    if (!route) throw new Error("Manager planning requires an active Studio route");
     const manager = agentFromState(state, route.managerAgentId);
-    const workers = state.agents.filter((agent) => agent.managerAgentId === manager.id && agent.teamId === route.teamId);
+    const studio = state.studios.find((candidate) => candidate.id === route.studioId);
+    if (!studio) throw new Error(`Studio is not in the organization graph: ${route.studioId}`);
     const result = await runtime.execute({
       idempotencyKey: `${state.orchestrationId}:manager-plan:${manager.id}`,
       orchestrationId: state.orchestrationId,
@@ -192,29 +203,33 @@ export function createCompanyGraph(runtime: AgentRuntimePort, checkpointer: Base
       mode: "plan",
       brief: `${route.missionTitle}\n\n${route.missionBrief}`,
       instructions: [
-        "Assign the mission to one through four direct reports. Use only supplied worker IDs.",
-        "Create one accountable deliverable per worker and concrete acceptance criteria.",
-        "Return JSON only: {\"workerAssignments\":[{\"agentId\":\"...\",\"title\":\"...\",\"brief\":\"...\",\"acceptanceCriteria\":[\"...\"]}]}"
+        "The Studio manager remains the accountable owner.",
+        "Describe zero through four temporary Run workers only when decomposition improves the outcome.",
+        "A temporary worker is not a durable employee. Choose kind workflow, subagent, or sandbox.",
+        "Return JSON only: {\"temporaryWorkers\":[{\"key\":\"...\",\"kind\":\"workflow|subagent|sandbox\",\"role\":\"...\",\"title\":\"...\",\"brief\":\"...\",\"acceptanceCriteria\":[\"...\"]}]}"
       ].join("\n"),
-      context: { route, workers }
+      context: { route, studio }
     });
     const response = managerResponseSchema.parse(parseJsonObject(result.output));
-    validateAssignments(state, route, response.workerAssignments);
+    validateTemporaryWorkers(response.temporaryWorkers);
     return {
-      departmentPlans: {
+      studioPlans: {
         ...route,
-        workerAssignments: response.workerAssignments
+        temporaryWorkers: response.temporaryWorkers
       }
     };
   };
 
   const finalize = (state: typeof CompanyState.State) => {
-    if (state.departmentPlans.length !== state.routes.length) {
-      throw new Error("Not every routed manager produced a department plan");
+    if (state.studioPlans.length !== state.routes.length) {
+      throw new Error("Not every routed manager produced a Studio plan");
     }
-    const workerCount = state.departmentPlans.reduce((sum, department) => sum + department.workerAssignments.length, 0);
+    const workerCount = state.studioPlans.reduce(
+      (sum, studio) => sum + studio.temporaryWorkers.length,
+      0
+    );
     return {
-      summary: `${state.departmentPlans.length} manager(s) assigned ${workerCount} specialist deliverable(s).`
+      summary: `${state.studioPlans.length} Studio manager(s) described ${workerCount} temporary Run worker(s).`
     };
   };
 
@@ -229,9 +244,9 @@ export function createCompanyGraph(runtime: AgentRuntimePort, checkpointer: Base
     .compile({ checkpointer });
 }
 
-export function companyPlanFromGraphState(state: typeof CompanyState.State): DepartmentPlan[] {
-  const order = new Map(state.teams.map((team) => [team.id, team.sortOrder]));
-  return departmentPlanSchema.array().parse(state.departmentPlans).toSorted(
-    (left, right) => (order.get(left.teamId) ?? 0) - (order.get(right.teamId) ?? 0)
+export function studioPlanFromGraphState(state: typeof CompanyState.State): StudioMissionPlan[] {
+  const order = new Map(state.studios.map((studio) => [studio.id, studio.sortOrder]));
+  return studioPlanSchema.array().parse(state.studioPlans).toSorted(
+    (left, right) => (order.get(left.studioId) ?? 0) - (order.get(right.studioId) ?? 0)
   );
 }

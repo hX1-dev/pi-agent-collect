@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/application/*.test.js dist/infrastructure/*.test.js dist/infrastructure/hermes/*.test.js",
+    "test": "node --test dist/api/*.test.js dist/application/*.test.js dist/infrastructure/*.test.js dist/infrastructure/hermes/*.test.js",
     "start": "node dist/index.js"
   },
   "dependencies": {

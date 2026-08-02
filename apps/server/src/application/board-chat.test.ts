@@ -12,6 +12,7 @@ import {
 } from "./orchestration/board-chat-coordinator.js";
 import { createBoardChatGraph } from "./orchestration/board-chat-graph.js";
 import { CompanyOrchestrator } from "./orchestration/company-orchestrator.js";
+import { StudioService } from "./studio-service.js";
 
 class RecordingBoardChatHandler implements BoardChatHandler {
   readonly requests: BoardChatDirective[] = [];
@@ -22,11 +23,11 @@ class RecordingBoardChatHandler implements BoardChatHandler {
       rootTaskId: "task-1",
       title: input.text,
       orchestrationId: "orchestration-1",
-      summary: "3 manager(s) assigned 12 specialist deliverable(s).",
-      departments: [
-        { teamName: "Social Studio", managerName: "Mira", workerCount: 4 },
-        { teamName: "Product Lab", managerName: "Kai", workerCount: 4 },
-        { teamName: "Life Office", managerName: "Rowan", workerCount: 4 }
+      summary: "3 Studio manager(s) described 3 temporary Run worker(s).",
+      studios: [
+        { studioName: "GitHub Research", managerName: "Kai", temporaryWorkerCount: 1 },
+        { studioName: "Content & Marketing", managerName: "Mira", temporaryWorkerCount: 1 },
+        { studioName: "Video Production", managerName: "Rowan", temporaryWorkerCount: 1 }
       ]
     };
   }
@@ -50,7 +51,7 @@ test("turns a human board message into one visible Avery response", async () => 
   const response = state.messages[1];
   assert.ok(response && isAIMessage(response));
   assert.match(response.text, /Avery/);
-  assert.match(response.text, /3 位部门经理向 12 位专员/);
+  assert.match(response.text, /3 位 Studio Manager 规划了 3 个临时执行单元/);
   assert.match(response.text, /不会自动发布/);
 });
 
@@ -67,6 +68,7 @@ test("maps one chat message to one durable company directive across retries", as
     maxConcurrency: 2,
     usageSource: "unknown"
   });
+  new StudioService(repository).bootstrapPersonalStudios();
   const orchestrator = new CompanyOrchestrator(repository, new MockAgentRuntime(), new MemorySaver());
   const coordinator = new BoardChatCoordinator(repository, orchestrator);
   const initialTaskCount = repository.getDashboard().tasks.length;
@@ -85,9 +87,12 @@ test("maps one chat message to one durable company directive across retries", as
 
   assert.equal(first.rootTaskId, repeated.rootTaskId);
   assert.equal(first.orchestrationId, repeated.orchestrationId);
-  assert.equal(first.departments.length, 3);
-  assert.equal(first.departments.reduce((sum, department) => sum + department.workerCount, 0), 12);
-  assert.equal(countAfterFirstTurn, initialTaskCount + 16);
+  assert.equal(first.studios.length, 3);
+  assert.equal(
+    first.studios.reduce((sum, studio) => sum + studio.temporaryWorkerCount, 0),
+    3
+  );
+  assert.equal(countAfterFirstTurn, initialTaskCount + 7);
   assert.equal(repository.getDashboard().tasks.length, countAfterFirstTurn);
   await assert.rejects(coordinator.handleDirective({
     threadId: "thread-stable",

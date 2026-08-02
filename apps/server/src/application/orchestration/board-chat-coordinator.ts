@@ -8,10 +8,10 @@ export interface BoardChatDirective {
   text: string;
 }
 
-export interface BoardChatDepartmentOutcome {
-  teamName: string;
+export interface BoardChatStudioOutcome {
+  studioName: string;
   managerName: string;
-  workerCount: number;
+  temporaryWorkerCount: number;
 }
 
 export interface BoardChatOutcome {
@@ -19,7 +19,7 @@ export interface BoardChatOutcome {
   title: string;
   orchestrationId: string;
   summary: string;
-  departments: BoardChatDepartmentOutcome[];
+  studios: BoardChatStudioOutcome[];
 }
 
 export interface BoardChatHandler {
@@ -56,7 +56,12 @@ export class BoardChatCoordinator implements BoardChatHandler {
     const orchestration = await this.orchestrator.orchestrate(task.id);
     const plan = completedPlan(orchestration);
     const dashboard = this.repository.getDashboard();
-    const teams = new Map(dashboard.teams.map((team) => [team.id, team.name]));
+    if (plan.planningModel !== "studio-v1") {
+      throw new Error("A newly completed board directive must use the Studio planning model");
+    }
+    const studios = new Map(
+      dashboard.studios.map((snapshot) => [snapshot.studio.id, snapshot.studio.name])
+    );
     const agents = new Map(dashboard.agents.map((agent) => [agent.id, agent.name]));
 
     return {
@@ -64,10 +69,10 @@ export class BoardChatCoordinator implements BoardChatHandler {
       title: task.title,
       orchestrationId: orchestration.id,
       summary: plan.summary,
-      departments: plan.departments.map((department) => ({
-        teamName: teams.get(department.teamId) ?? department.teamId,
-        managerName: agents.get(department.managerAgentId) ?? department.managerAgentId,
-        workerCount: department.workerAssignments.length
+      studios: plan.studios.map((studio) => ({
+        studioName: studios.get(studio.studioId) ?? studio.studioId,
+        managerName: agents.get(studio.managerAgentId) ?? studio.managerAgentId,
+        temporaryWorkerCount: studio.temporaryWorkers.length
       }))
     };
   }

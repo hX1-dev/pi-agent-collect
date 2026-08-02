@@ -17,16 +17,19 @@ const boardInputSchema = z.object({
 });
 
 function formatOutcome(outcome: BoardChatOutcome): string {
-  const departmentLines = outcome.departments.map((department) => (
-    `- **${department.teamName}** — ${department.managerName}，${department.workerCount} 位专员`
+  const studioLines = outcome.studios.map((studio) => (
+    `- **${studio.studioName}** — ${studio.managerName}，${studio.temporaryWorkerCount} 个临时执行单元`
   ));
-  const workerCount = outcome.departments.reduce((sum, department) => sum + department.workerCount, 0);
+  const workerCount = outcome.studios.reduce(
+    (sum, studio) => sum + studio.temporaryWorkerCount,
+    0
+  );
   return [
     `Avery 已接收你的指令：**${outcome.title}**`,
     "",
-    ...departmentLines,
+    ...studioLines,
     "",
-    `公司编排已完成：${outcome.departments.length} 位部门经理向 ${workerCount} 位专员分配了工作。`,
+    `工作室编排已完成：${outcome.studios.length} 位 Studio Manager 规划了 ${workerCount} 个临时执行单元。`,
     outcome.summary,
     "",
     "目前只创建内部计划与任务，不会自动发布、发消息、改日历或产生付款。"

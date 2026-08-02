@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { CompanyPlan } from "@private-ai-org/core";
+import type { StudioCompanyPlan } from "@private-ai-org/core";
 import { MemorySaver } from "@langchain/langgraph";
 import { OrganizationRepository } from "../infrastructure/database.js";
 import { MockAgentRuntime } from "../infrastructure/hermes/mock-agent-runtime.js";
@@ -10,11 +10,12 @@ import type {
   AgentRuntimeResult
 } from "./orchestration/agent-runtime-port.js";
 import {
-  companyPlanFromGraphState,
   createCompanyGraph,
+  studioPlanFromGraphState,
   type CompanyGraphInput
 } from "./orchestration/company-graph.js";
 import { CompanyOrchestrator } from "./orchestration/company-orchestrator.js";
+import { StudioService } from "./studio-service.js";
 
 class ControlledRuntime implements AgentRuntimePort {
   readonly requests: AgentRuntimeRequest[] = [];
@@ -35,15 +36,17 @@ class ControlledRuntime implements AgentRuntimePort {
   }
 }
 
-function companyInput(teamCount: number, workersPerTeam: number): CompanyGraphInput {
-  const teams = Array.from({ length: teamCount }, (_, teamIndex) => {
-    const number = teamIndex + 1;
+function companyInput(studioCount: number): CompanyGraphInput {
+  const studios = Array.from({ length: studioCount }, (_, studioIndex) => {
+    const number = studioIndex + 1;
     return {
-      id: `team-${number}`,
-      name: `Department ${number}`,
-      purpose: `Own department ${number} work.`,
-      leadAgentId: `manager-${number}`,
-      sortOrder: number
+      id: `studio-${number}`,
+      key: `studio-${number}`,
+      name: `Studio ${number}`,
+      purpose: `Own Studio ${number} work.`,
+      managerAgentId: `manager-${number}`,
+      sortOrder: number,
+      status: "active" as const
     };
   });
 
@@ -57,194 +60,227 @@ function companyInput(teamCount: number, workersPerTeam: number): CompanyGraphIn
       role: "Route board directives through the company.",
       responsibilities: ["Company routing"],
       runtimeProfile: "ceo"
-    }
+    },
+    ...studios.map((studio) => ({
+      id: studio.managerAgentId,
+      teamId: null,
+      managerAgentId: "ceo",
+      name: `Manager ${studio.sortOrder}`,
+      title: `${studio.name} Manager`,
+      role: `Manage ${studio.name}.`,
+      responsibilities: ["Own Studio outcomes"],
+      runtimeProfile: studio.managerAgentId
+    }))
   ];
 
-  for (const team of teams) {
-    agents.push({
-      id: team.leadAgentId,
-      teamId: team.id,
-      managerAgentId: "ceo",
-      name: `Manager ${team.sortOrder}`,
-      title: `${team.name} Manager`,
-      role: `Manage ${team.name}.`,
-      responsibilities: ["Plan department work"],
-      runtimeProfile: team.leadAgentId
-    });
-
-    for (let workerIndex = 1; workerIndex <= workersPerTeam; workerIndex += 1) {
-      agents.push({
-        id: `worker-${team.sortOrder}-${workerIndex}`,
-        teamId: team.id,
-        managerAgentId: team.leadAgentId,
-        name: `Worker ${team.sortOrder}.${workerIndex}`,
-        title: `Specialist ${workerIndex}`,
-        role: `Deliver specialist work for ${team.name}.`,
-        responsibilities: ["Complete assigned deliverables"],
-        runtimeProfile: `worker-${team.sortOrder}-${workerIndex}`
-      });
-    }
-  }
-
   return {
-    orchestrationId: `orchestration-${teamCount}-${workersPerTeam}`,
-    rootTaskId: `root-task-${teamCount}-${workersPerTeam}`,
+    orchestrationId: `orchestration-${studioCount}`,
+    rootTaskId: `root-task-${studioCount}`,
     title: "Prepare a company launch plan",
-    brief: "Have the relevant departments produce accountable deliverables.",
+    brief: "Have the relevant Studios produce accountable deliverables.",
     risk: "green",
-    preferredTeamId: null,
-    teams,
+    ceoAgentId: "ceo",
+    preferredStudioId: null,
+    studios,
     agents
   };
 }
 
-function routeAllTeams(input: CompanyGraphInput) {
+function routeAllStudios(input: CompanyGraphInput) {
   return {
-    departments: input.teams.map((team) => ({
-      teamId: team.id,
-      managerAgentId: team.leadAgentId,
-      missionTitle: `Plan ${team.name}`,
-      missionBrief: `Break the ${team.name} mission into owned deliverables.`
+    studios: input.studios.map((studio) => ({
+      studioId: studio.id,
+      managerAgentId: studio.managerAgentId,
+      missionTitle: `Plan ${studio.name}`,
+      missionBrief: `Break the ${studio.name} mission into evidence-backed work.`
     }))
   };
 }
 
-function assignmentsForManager(input: CompanyGraphInput, managerAgentId: string) {
-  return input.agents
-    .filter((agent) => agent.managerAgentId === managerAgentId)
-    .map((worker) => ({
-      agentId: worker.id,
-      title: `Deliver ${worker.title}`,
-      brief: `Complete the specialist deliverable owned by ${worker.name}.`,
-      acceptanceCriteria: [`Evidence from ${worker.id} is attached.`]
-    }));
+function temporaryWorkerForManager(managerAgentId: string) {
+  return {
+    temporaryWorkers: [{
+      key: `worker-${managerAgentId}`,
+      kind: "workflow",
+      role: "Temporary delivery workflow",
+      title: `Deliver work for ${managerAgentId}`,
+      brief: "Complete the smallest useful work package under manager accountability.",
+      acceptanceCriteria: ["Evidence is attached."]
+    }]
+  };
 }
 
-test("builds a CompanyPlan from at most three managers with four direct workers each", async () => {
-  const input = companyInput(3, 4);
+test("builds a Studio plan without permanent specialist Agent identities", async () => {
+  const input = companyInput(3);
   const runtime = new ControlledRuntime((request) => {
-    if (request.mode === "route") return routeAllTeams(input);
-    return { workerAssignments: assignmentsForManager(input, request.agent.id) };
+    if (request.mode === "route") return routeAllStudios(input);
+    return temporaryWorkerForManager(request.agent.id);
   });
   const graph = createCompanyGraph(runtime, new MemorySaver());
 
   const state = await graph.invoke(input, {
     configurable: { thread_id: input.orchestrationId }
   });
-  const plan: CompanyPlan = {
+  const plan: StudioCompanyPlan = {
+    planningModel: "studio-v1",
     orchestrationId: state.orchestrationId,
     rootTaskId: state.rootTaskId,
-    departments: companyPlanFromGraphState(state),
+    studios: studioPlanFromGraphState(state),
     summary: state.summary
   };
 
-  assert.equal(plan.orchestrationId, input.orchestrationId);
-  assert.equal(plan.rootTaskId, input.rootTaskId);
-  assert.equal(plan.departments.length, 3);
-  assert.equal(plan.summary, "3 manager(s) assigned 12 specialist deliverable(s).");
-  assert.deepEqual(plan.departments.map((department) => department.teamId), [
-    "team-1",
-    "team-2",
-    "team-3"
+  assert.equal(plan.studios.length, 3);
+  assert.equal(plan.summary, "3 Studio manager(s) described 3 temporary Run worker(s).");
+  assert.deepEqual(plan.studios.map((studio) => studio.studioId), [
+    "studio-1",
+    "studio-2",
+    "studio-3"
   ]);
-  for (const department of plan.departments) {
-    assert.equal(department.workerAssignments.length, 4);
-    for (const assignment of department.workerAssignments) {
-      const worker = input.agents.find((agent) => agent.id === assignment.agentId);
-      assert.ok(worker);
-      assert.equal(worker.teamId, department.teamId);
-      assert.equal(worker.managerAgentId, department.managerAgentId);
-    }
+  assert.equal(input.agents.length, 4);
+  for (const studio of plan.studios) {
+    assert.equal(studio.temporaryWorkers.length, 1);
+    assert.equal(studio.temporaryWorkers[0]?.kind, "workflow");
+    assert.ok(!("agentId" in (studio.temporaryWorkers[0] ?? {})));
   }
   assert.equal(runtime.requests.filter((request) => request.mode === "route").length, 1);
   assert.equal(runtime.requests.filter((request) => request.mode === "plan").length, 3);
 });
 
-test("rejects a CEO response that routes more than three departments", async () => {
-  const input = companyInput(4, 1);
-  const runtime = new ControlledRuntime(() => routeAllTeams(input));
+test("rejects a planner input with more than the three committed Studios", async () => {
+  const input = companyInput(4);
+  const runtime = new ControlledRuntime(() => routeAllStudios(input));
   const graph = createCompanyGraph(runtime, new MemorySaver());
 
   await assert.rejects(graph.invoke(input, {
     configurable: { thread_id: input.orchestrationId }
   }));
-  assert.equal(runtime.requests.length, 1);
-  assert.equal(runtime.requests[0]?.mode, "route");
+  assert.equal(runtime.requests.length, 0);
 });
 
-test("rejects a manager response that assigns more than four workers", async () => {
-  const input = companyInput(1, 5);
-  const runtime = new ControlledRuntime((request) => {
-    if (request.mode === "route") return routeAllTeams(input);
-    return { workerAssignments: assignmentsForManager(input, request.agent.id) };
-  });
+test("allows a Studio manager to keep work without inventing a temporary worker", async () => {
+  const input = companyInput(1);
+  const runtime = new ControlledRuntime((request) => (
+    request.mode === "route" ? routeAllStudios(input) : { temporaryWorkers: [] }
+  ));
   const graph = createCompanyGraph(runtime, new MemorySaver());
 
-  await assert.rejects(graph.invoke(input, {
+  const state = await graph.invoke(input, {
     configurable: { thread_id: input.orchestrationId }
-  }));
-  assert.equal(runtime.requests.filter((request) => request.mode === "plan").length, 1);
+  });
+  assert.equal(studioPlanFromGraphState(state)[0]?.temporaryWorkers.length, 0);
+  assert.equal(state.summary, "1 Studio manager(s) described 0 temporary Run worker(s).");
 });
 
-test("rejects a worker who is not a direct report of the routed manager", async () => {
-  const input = companyInput(2, 1);
-  const runtime = new ControlledRuntime((request) => {
-    if (request.mode === "route") {
-      return { departments: routeAllTeams(input).departments.slice(0, 1) };
-    }
-    return {
-      workerAssignments: [{
-        agentId: "worker-2-1",
-        title: "Borrow another department's worker",
-        brief: "Attempt an invalid cross-department assignment.",
-        acceptanceCriteria: ["The assignment is rejected."]
-      }]
-    };
-  });
+test("rejects duplicate temporary worker descriptions from one manager", async () => {
+  const input = companyInput(1);
+  const duplicate = temporaryWorkerForManager("manager-1").temporaryWorkers[0];
+  const runtime = new ControlledRuntime((request) => (
+    request.mode === "route"
+      ? routeAllStudios(input)
+      : { temporaryWorkers: [duplicate, duplicate] }
+  ));
   const graph = createCompanyGraph(runtime, new MemorySaver());
 
   await assert.rejects(
     graph.invoke(input, {
       configurable: { thread_id: input.orchestrationId }
     }),
-    /worker-2-1 is not a direct report of manager-1/
+    /same temporary worker twice/
   );
 });
 
-test("persists an idempotent 1 CEO + 3 managers + 12 workers company plan", async () => {
+test("persists an idempotent CEO plus three Studio-manager plan", async () => {
+  const repository = new OrganizationRepository({
+    databasePath: ":memory:",
+    maxConcurrency: 2,
+    usageSource: "unknown"
+  });
+  new StudioService(repository).bootstrapPersonalStudios();
+  const rootTask = repository.createDirective({
+    title: "Prepare a company-wide operating plan",
+    brief: "Ask all Studios for the smallest accountable contribution."
+  });
+  const initialTaskCount = repository.getDashboard().tasks.length;
+  const orchestrator = new CompanyOrchestrator(
+    repository,
+    new MockAgentRuntime(),
+    new MemorySaver()
+  );
+
+  const orchestration = await orchestrator.orchestrate(rootTask.id);
+  assert.equal(orchestration.status, "completed");
+  assert.equal(orchestration.plan?.planningModel, "studio-v1");
+  assert.equal(
+    orchestration.plan?.planningModel === "studio-v1"
+      ? orchestration.plan.studios.length
+      : 0,
+    3
+  );
+  assert.equal(repository.getDashboard().tasks.length, initialTaskCount + 6);
+  assert.throws(
+    () => repository.createRun(rootTask.id, "mock"),
+    /cannot run until its child tasks are finished/
+  );
+
+  const plannedTasks = repository.getDashboard().tasks.filter(
+    (task) => task.parentTaskId === rootTask.id
+      || repository.getDashboard().tasks.some(
+        (parent) => parent.id === task.parentTaskId && parent.parentTaskId === rootTask.id
+      )
+  );
+  assert.equal(plannedTasks.length, 6);
+  assert.ok(plannedTasks.every((task) => task.studioId !== null));
+  assert.ok(plannedTasks.every((task) => (
+    ["agent-kai", "agent-mira", "agent-rowan"].includes(task.ownerAgentId ?? "")
+  )));
+  assert.ok(plannedTasks.every((task) => ![
+    "agent-iris",
+    "agent-theo",
+    "agent-nova",
+    "agent-june"
+  ].includes(task.ownerAgentId ?? "")));
+
+  const temporaryTask = plannedTasks.find((task) => (
+    plannedTasks.some((parent) => parent.id === task.parentTaskId)
+  ));
+  assert.ok(temporaryTask);
+  assert.match(temporaryTask.brief, /Temporary worker:/);
+  assert.equal(repository.createRun(temporaryTask.id, "mock").status, "queued");
+
+  const repeated = await orchestrator.orchestrate(rootTask.id);
+  assert.equal(repeated.id, orchestration.id);
+  assert.equal(repository.getDashboard().tasks.length, initialTaskCount + 6);
+  repository.close();
+});
+
+test("fails closed instead of resuming an incompatible legacy graph checkpoint", async () => {
   const repository = new OrganizationRepository({
     databasePath: ":memory:",
     maxConcurrency: 2,
     usageSource: "unknown"
   });
   const rootTask = repository.createDirective({
-    title: "Prepare a company-wide operating plan",
-    brief: "Ask all departments for the smallest accountable contribution."
+    title: "Legacy in-flight directive",
+    brief: "This checkpoint predates the Studio planning contract."
   });
-  const initialTaskCount = repository.getDashboard().tasks.length;
-  const orchestrator = new CompanyOrchestrator(repository, new MockAgentRuntime(), new MemorySaver());
-
-  const orchestration = await orchestrator.orchestrate(rootTask.id);
-  assert.equal(orchestration.status, "completed");
-  assert.equal(orchestration.plan?.departments.length, 3);
-  assert.equal(orchestration.plan?.departments.reduce(
-    (count, department) => count + department.workerAssignments.length,
-    0
-  ), 12);
-  assert.equal(repository.getDashboard().tasks.length, initialTaskCount + 15);
-  assert.throws(
-    () => repository.createRun(rootTask.id, "mock"),
-    /cannot run until its child tasks are finished/
+  const legacy = repository.createOrchestration(
+    rootTask.id,
+    "northstar-company",
+    "1"
   );
-  const workerTask = repository.getDashboard().tasks.find((task) => (
-    task.parentTaskId !== null
-    && repository.getDashboard().tasks.some((parent) => parent.id === task.parentTaskId && parent.parentTaskId === rootTask.id)
-  ));
-  assert.ok(workerTask);
-  assert.equal(repository.createRun(workerTask.id, "mock").status, "queued");
+  const orchestrator = new CompanyOrchestrator(
+    repository,
+    new MockAgentRuntime(),
+    new MemorySaver()
+  );
 
-  const repeated = await orchestrator.orchestrate(rootTask.id);
-  assert.equal(repeated.id, orchestration.id);
-  assert.equal(repository.getDashboard().tasks.length, initialTaskCount + 15);
+  await assert.rejects(
+    orchestrator.orchestrate(rootTask.id),
+    /Cannot resume northstar-company@1/
+  );
+  const failed = repository.getOrchestrationForTask(rootTask.id);
+  assert.equal(failed?.id, legacy.id);
+  assert.equal(failed?.status, "failed");
+  assert.match(failed?.summary ?? "", /new board directive/);
   repository.close();
 });

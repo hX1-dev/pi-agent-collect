@@ -80,6 +80,7 @@ export interface Goal {
 export interface Task {
   id: Id;
   companyId: Id;
+  studioId: Id | null;
   teamId: Id | null;
   goalId: Id | null;
   parentTaskId: Id | null;
@@ -113,27 +114,65 @@ export interface Run {
   createdAt: string;
 }
 
-export interface WorkerAssignment {
+export type TemporaryWorkerKind = "workflow" | "subagent" | "sandbox";
+
+/**
+ * A temporary worker is a Run-scoped execution description, not a durable
+ * Agent identity. The Studio manager remains accountable for its work.
+ */
+export interface TemporaryWorkerPlan {
+  key: string;
+  kind: TemporaryWorkerKind;
+  role: string;
+  title: string;
+  brief: string;
+  acceptanceCriteria: string[];
+}
+
+export interface StudioMissionPlan {
+  studioId: Id;
+  managerAgentId: Id;
+  missionTitle: string;
+  missionBrief: string;
+  temporaryWorkers: TemporaryWorkerPlan[];
+}
+
+export interface StudioCompanyPlan {
+  planningModel: "studio-v1";
+  orchestrationId: Id;
+  rootTaskId: Id;
+  studios: StudioMissionPlan[];
+  summary: string;
+}
+
+/**
+ * Historical plans stay readable after the Studio migration. New
+ * orchestrations must never create this shape.
+ */
+export interface LegacyWorkerAssignment {
   agentId: Id;
   title: string;
   brief: string;
   acceptanceCriteria: string[];
 }
 
-export interface DepartmentPlan {
+export interface LegacyDepartmentPlan {
   teamId: Id;
   managerAgentId: Id;
   missionTitle: string;
   missionBrief: string;
-  workerAssignments: WorkerAssignment[];
+  workerAssignments: LegacyWorkerAssignment[];
 }
 
-export interface CompanyPlan {
+export interface LegacyCompanyPlan {
+  planningModel: "legacy-team-v1";
   orchestrationId: Id;
   rootTaskId: Id;
-  departments: DepartmentPlan[];
+  departments: LegacyDepartmentPlan[];
   summary: string;
 }
+
+export type CompanyPlan = StudioCompanyPlan | LegacyCompanyPlan;
 
 export interface OrchestrationRun {
   id: Id;
@@ -151,6 +190,8 @@ export interface OrchestrationRun {
 export interface ActivityEvent {
   id: Id;
   companyId: Id;
+  studioId: Id | null;
+  studioInstanceId: Id | null;
   taskId: Id | null;
   runId: Id | null;
   agentId: Id | null;
@@ -185,6 +226,7 @@ export interface UsageSummary {
 
 export interface DashboardSnapshot {
   company: Company;
+  studios: import("./studio.js").StudioOperationalSnapshot[];
   teams: Team[];
   agents: Agent[];
   goals: Goal[];
@@ -205,6 +247,8 @@ export interface DashboardSnapshot {
 export interface CreateDirectiveInput {
   title: string;
   brief: string;
+  studioId?: Id | null;
+  /** @deprecated Compatibility input for the pre-Studio UI and old clients. */
   teamId?: Id | null;
   priority?: TaskPriority;
   risk?: RiskLevel;

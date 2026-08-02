@@ -49,11 +49,12 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 
-type View = "board" | "work" | "organization" | "approvals" | "activity";
+type View = "board" | "work" | "studios" | "organization" | "approvals" | "activity";
 
 const nav: Array<{ id: View; label: string; icon: typeof LayoutDashboard }> = [
   { id: "board", label: "Board", icon: LayoutDashboard },
   { id: "work", label: "Work", icon: BriefcaseBusiness },
+  { id: "studios", label: "Studios", icon: Building2 },
   { id: "organization", label: "Organization", icon: Network },
   { id: "approvals", label: "Approvals", icon: ShieldCheck },
   { id: "activity", label: "Activity", icon: Activity }
@@ -166,7 +167,7 @@ function DirectiveComposer({ snapshot, onCreated }: { snapshot: DashboardSnapsho
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
-  const [teamId, setTeamId] = useState("");
+  const [studioId, setStudioId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,14 +179,14 @@ function DirectiveComposer({ snapshot, onCreated }: { snapshot: DashboardSnapsho
       const input: CreateDirectiveInput = {
         title,
         brief,
-        teamId: teamId || null,
+        studioId: studioId || null,
         priority: "normal",
         risk: "green"
       };
       await api.createDirective(input);
       setTitle("");
       setBrief("");
-      setTeamId("");
+      setStudioId("");
       setExpanded(false);
       onCreated();
     } catch (reason) {
@@ -210,7 +211,7 @@ function DirectiveComposer({ snapshot, onCreated }: { snapshot: DashboardSnapsho
       <div className="directive-form-head">
         <div>
           <span className="eyebrow">Board directive</span>
-          <strong>Avery will choose the smallest effective team</strong>
+          <strong>Avery will choose the smallest effective Studio</strong>
         </div>
         <button type="button" className="icon-button" onClick={() => setExpanded(false)} aria-label="Close directive composer"><X size={17} /></button>
       </div>
@@ -230,9 +231,11 @@ function DirectiveComposer({ snapshot, onCreated }: { snapshot: DashboardSnapsho
         required
       />
       <div className="directive-actions">
-        <select value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+        <select value={studioId} onChange={(event) => setStudioId(event.target.value)}>
           <option value="">Let Chief route it</option>
-          {snapshot.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+          {snapshot.studios.map(({ studio }) => (
+            <option key={studio.id} value={studio.id}>{studio.name}</option>
+          ))}
         </select>
         {error && <span className="form-error">{error}</span>}
         <button className="primary-button" disabled={submitting}>
@@ -244,10 +247,11 @@ function DirectiveComposer({ snapshot, onCreated }: { snapshot: DashboardSnapsho
   );
 }
 
-function TaskRow({ task, agents, teams, onDispatch, dispatching, onReview, reviewing, onOpen, blockedByChildren }: {
+function TaskRow({ task, agents, teams, studios, onDispatch, dispatching, onReview, reviewing, onOpen, blockedByChildren }: {
   task: Task;
   agents: Agent[];
   teams: Team[];
+  studios: DashboardSnapshot["studios"];
   onDispatch?: (taskId: string) => void;
   dispatching?: boolean;
   onReview?: (taskId: string, decision: "accepted" | "rework") => void;
@@ -257,6 +261,7 @@ function TaskRow({ task, agents, teams, onDispatch, dispatching, onReview, revie
 }) {
   const owner = agents.find((agent) => agent.id === task.ownerAgentId);
   const team = teams.find((item) => item.id === task.teamId);
+  const studio = studios.find((item) => item.studio.id === task.studioId)?.studio;
   const dispatchable = !blockedByChildren && ["planned", "queued", "blocked", "failed"].includes(task.status);
   return (
     <div className="task-row">
@@ -267,7 +272,9 @@ function TaskRow({ task, agents, teams, onDispatch, dispatching, onReview, revie
           <span className={`status-pill status-${task.status}`}>{statusLabels[task.status]}</span>
         </div>
         <div className="task-meta">
-          {team && <span><i style={{ background: team.color }} />{team.name}</span>}
+          {studio
+            ? <span><i style={{ background: "#6d7f78" }} />{studio.name}</span>
+            : team && <span><i style={{ background: team.color }} />{team.name}</span>}
           {owner && <span>{owner.name}</span>}
           <span>{task.progress}%</span>
         </div>
@@ -420,7 +427,15 @@ function BoardView({ snapshot, refresh, onView }: { snapshot: DashboardSnapshot;
         <section className="work-section">
           <SectionTitle eyebrow="Execution" title="Work moving now" action={<button type="button" className="text-button" onClick={() => onView("work")}>Open work board <ArrowRight size={15} /></button>} />
           <div className="task-list">
-            {openTasks.map((task) => <TaskRow key={task.id} task={task} agents={snapshot.agents} teams={snapshot.teams} />)}
+            {openTasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                agents={snapshot.agents}
+                teams={snapshot.teams}
+                studios={snapshot.studios}
+              />
+            ))}
           </div>
         </section>
       </main>
@@ -433,6 +448,7 @@ function TaskDrawer({ task, snapshot, onClose }: { task: Task; snapshot: Dashboa
   const owner = snapshot.agents.find((agent) => agent.id === task.ownerAgentId);
   const reviewer = snapshot.agents.find((agent) => agent.id === task.reviewerAgentId);
   const team = snapshot.teams.find((item) => item.id === task.teamId);
+  const studio = snapshot.studios.find((item) => item.studio.id === task.studioId)?.studio;
   const runs = snapshot.runs.filter((run) => run.taskId === task.id);
   const orchestration = snapshot.orchestrations.find((item) => item.rootTaskId === task.id);
   return (
@@ -458,7 +474,10 @@ function TaskDrawer({ task, snapshot, onClose }: { task: Task; snapshot: Dashboa
         <section className="drawer-section">
           <span className="drawer-label"><GitBranch size={14} />Execution context</span>
           <dl className="context-grid">
-            <div><dt>Department</dt><dd>{team?.name ?? "Executive office"}</dd></div>
+            <div>
+              <dt>Studio</dt>
+              <dd>{studio?.name ?? team?.name ?? "Executive office"}</dd>
+            </div>
             <div><dt>Task ID</dt><dd>{task.id}</dd></div>
           </dl>
         </section>
@@ -468,8 +487,29 @@ function TaskDrawer({ task, snapshot, onClose }: { task: Task; snapshot: Dashboa
             <p>{orchestration.summary ?? "Avery and the department managers are preparing the work plan."}</p>
             {orchestration.plan && (
               <dl className="context-grid">
-                <div><dt>Departments</dt><dd>{orchestration.plan.departments.length}</dd></div>
-                <div><dt>Specialists</dt><dd>{orchestration.plan.departments.reduce((count, department) => count + department.workerAssignments.length, 0)}</dd></div>
+                {orchestration.plan.planningModel === "studio-v1" ? (
+                  <>
+                    <div><dt>Studios</dt><dd>{orchestration.plan.studios.length}</dd></div>
+                    <div>
+                      <dt>Temporary workers</dt>
+                      <dd>{orchestration.plan.studios.reduce(
+                        (count, item) => count + item.temporaryWorkers.length,
+                        0
+                      )}</dd>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div><dt>Legacy departments</dt><dd>{orchestration.plan.departments.length}</dd></div>
+                    <div>
+                      <dt>Legacy specialists</dt>
+                      <dd>{orchestration.plan.departments.reduce(
+                        (count, department) => count + department.workerAssignments.length,
+                        0
+                      )}</dd>
+                    </div>
+                  </>
+                )}
               </dl>
             )}
           </section>
@@ -550,6 +590,7 @@ function WorkView({ snapshot, refresh }: { snapshot: DashboardSnapshot; refresh:
                     task={task}
                     agents={snapshot.agents}
                     teams={snapshot.teams}
+                    studios={snapshot.studios}
                     onDispatch={dispatch}
                     dispatching={dispatching === task.id}
                     onReview={review}
@@ -611,6 +652,72 @@ function OrganizationView({ snapshot }: { snapshot: DashboardSnapshot }) {
               );
             })}
           </div>
+        </div>
+      )}
+    </PageShell>
+  );
+}
+
+function StudiosView({ snapshot }: { snapshot: DashboardSnapshot }) {
+  return (
+    <PageShell
+      eyebrow="Runtime boundaries"
+      title="Durable Studios, replaceable machines."
+      description="A Studio is the organizational identity. VM instances and heartbeats are operational evidence, never the identity itself."
+    >
+      {snapshot.studios.length === 0 ? (
+        <div className="studio-empty">
+          <Building2 size={23} />
+          <div>
+            <strong>No Studio contract has been configured yet.</strong>
+            <p>Create the first Studio through the local Controller API before connecting a VM.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="studio-grid">
+          {snapshot.studios.map(({ studio, instances, health }) => {
+            const currentInstance = instances.find((instance) => instance.status !== "revoked");
+            const components = [
+              ["VM", health.components.vm],
+              ["northstar-host", health.components.northstarHost],
+              ["Hermes", health.components.hermes],
+              ["Sandbox", health.components.sandbox]
+            ] as const;
+            return (
+              <article className="studio-card" key={studio.id}>
+                <header>
+                  <div className="studio-card-icon"><Building2 size={18} /></div>
+                  <div>
+                    <span className="eyebrow">{studio.key}</span>
+                    <h2>{studio.name}</h2>
+                  </div>
+                  <span className={`health-badge health-${health.overall}`}>{health.overall}</span>
+                </header>
+                <p>{studio.purpose}</p>
+                <dl className="studio-facts">
+                  <div><dt>Studio state</dt><dd>{studio.status}</dd></div>
+                  <div><dt>Current instance</dt><dd>{currentInstance ? `Generation ${currentInstance.generation}` : "Not created"}</dd></div>
+                  <div><dt>Instance state</dt><dd>{currentInstance?.status ?? "Unavailable"}</dd></div>
+                  <div><dt>VM lifecycle</dt><dd>{health.vmLifecycle}</dd></div>
+                  <div><dt>Last heartbeat</dt><dd>{relativeTime(health.lastHeartbeatAt)}</dd></div>
+                  <div><dt>Host version</dt><dd>{health.hostVersion ?? "Unknown"}</dd></div>
+                </dl>
+                <div className="studio-components">
+                  {components.map(([label, status]) => (
+                    <div key={label}>
+                      <span className={`component-dot health-${status}`} />
+                      <strong>{label}</strong>
+                      <small>{status}</small>
+                    </div>
+                  ))}
+                </div>
+                <footer>
+                  <span>{health.queue.activeJobs} active · {health.queue.waitingJobs} waiting</span>
+                  <span>{instances.length} instance record{instances.length === 1 ? "" : "s"}</span>
+                </footer>
+              </article>
+            );
+          })}
         </div>
       )}
     </PageShell>
@@ -753,6 +860,7 @@ export default function App() {
         {error && <div className="error-banner">Last refresh failed: {error}</div>}
         {view === "board" && <BoardView snapshot={snapshot} refresh={refresh} onView={setView} />}
         {view === "work" && <WorkView snapshot={snapshot} refresh={refresh} />}
+        {view === "studios" && <StudiosView snapshot={snapshot} />}
         {view === "organization" && <OrganizationView snapshot={snapshot} />}
         {view === "approvals" && <ApprovalsView snapshot={snapshot} refresh={refresh} />}
         {view === "activity" && <ActivityView snapshot={snapshot} />}

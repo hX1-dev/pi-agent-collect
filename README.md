@@ -1,22 +1,104 @@
 # Northstar House — Private AI Organization
 
-Northstar is a local-first control plane for a private AI company. The Board works through one chat surface; 16 durable employee identities sit behind it. Northstar owns organization state and authority, LangGraph.js coordinates a company task, Hermes is the replaceable employee runtime, and Codex will be a brokered engineering tool rather than an employee identity.
+> **Active branch: Personal VMware Foundation.** This worktree serves Henry's
+> local system first: one host-side Northstar Controller, one persistent Hermes
+> manager per Studio VM, disposable task sandboxes inside the VM, and brokered
+> Codex access. A legacy 16-identity roster remains readable for historical
+> compatibility, but the active planner no longer uses its fixed specialists.
+> See the
+> [personal VMware execution plan](docs/personal-vmware-foundation-plan.md),
+> [verified implementation status](docs/personal-vmware-implementation-status.md),
+> and the reusable
+> [master implementation prompt](docs/prompts/personal-vmware-master-implementation-prompt.md).
+
+Northstar is a local-first control plane for a private AI studio. The Board
+works through one CEO surface; three durable Studios and their accountable
+managers sit behind it. Northstar owns organization state and authority,
+LangGraph.js coordinates a company task, Hermes is the replaceable manager
+runtime, and Codex will be a brokered engineering tool rather than an employee
+identity.
 
 ## What works now
 
 - LangChain's official Agent Chat UI as the Board's primary local interface
 - A thin `messages` graph that maps one chat message to one durable Northstar directive
 - An optional Board, Work, Organization, Approvals, and Activity evidence console backed by local SQLite
-- A persisted 16-person hierarchy: one CEO, three department managers, and four specialists per manager
-- Automatic board-directive planning through `CEO -> 1–3 managers -> 1–4 direct reports per manager`
-- Embedded LangGraph.js with a separate SQLite checkpoint database
-- Runtime validation that rejects unknown departments, cross-team assignments, more than three managers, or more than four workers
-- A durable orchestration record and accountable manager/worker task tree in Northstar
+- A preserved legacy 16-person directory that is no longer planning authority
+- Automatic board-directive planning through
+  `CEO -> 1–3 Studio Managers -> 0–4 temporary Run workers`
+- Embedded LangGraph.js with a separate SQLite checkpoint database and an
+  explicit graph-version compatibility gate
+- Runtime validation that rejects unknown/retired Studios, mismatched managers,
+  duplicate temporary-worker keys, and more than three Studios or four
+  temporary workers per Studio
+- A durable orchestration record and Studio-attributed task tree; every new
+  task remains owned by its accountable Studio Manager
 - One active Run per task and Agent, plus one writable Run per workspace
 - Deterministic Mock runtime by default: no model API, Hermes process, Codex usage, or external action
 - A guarded Hermes Runs API adapter with a DeepSeek-backed local pilot; approval waits stop instead of auto-approving
+- Phase 0 Studio contracts with durable Studio identity, replaceable instance
+  generations, idempotent heartbeat evidence, additive SQLite persistence, and
+  a read-only Studio health view
+- Runtime-validated local Controller endpoints for Studio creation, explicit
+  instance replacement, heartbeat reporting, and operational snapshots; guest
+  credentials and real VMware control are not enabled
+- An opt-in VMware Fusion lifecycle adapter for one exact Studio instance. It
+  uses direct `vmrun` argument vectors, persists request/success/failure
+  evidence, survives idempotent replay across restart, and performs a
+  no-command startup preflight for the configured `vmrun` and VMX files. Both
+  final paths must be direct regular files rather than symbolic links, and the
+  provider repeats the same readiness check immediately before every new
+  lifecycle action so a startup result cannot authorize a later replacement.
+  Provider failures redact the configured files, their non-root parent
+  directories, and in-bundle state-file paths before durable evidence; HTTP
+  clients receive stable errors. A process-runner boundary that rejects without
+  returning a result, a `vmrun` timeout, output-limit termination, or
+  operating-system signal is treated as indeterminate because the external
+  action may already have happened. The same applies when `vmrun` returns
+  success but the configured
+  lock/checkpoint state cannot be read or does not converge. In each case the
+  operation stays pending, the same key cannot execute again, and an alternate
+  key cannot start another lifecycle action for that Studio instance. While
+  any operation for a Studio remains pending, Northstar also rejects instance
+  creation/replacement and Studio retirement in the same SQLite write
+  transaction, so changing durable identity cannot bypass or orphan the
+  unresolved action. This
+  fail-safe rule also applies if the provider finishes but SQLite cannot durably
+  record either its success or its failure. Lifecycle remains disabled until
+  all four local target variables are configured; a configured target remains
+  read-only unless a
+  separate action-arming variable is explicitly set to `true` with a future
+  deadline of at most 30 minutes. Lock and checkpoint lookups treat only
+  `ENOENT` as absence; permission, symlink-loop, direct state-path symlinks, and
+  other filesystem faults fail closed instead of being misread as a stopped VM
+- A provider-independent, read-only lifecycle evidence endpoint remains
+  available after VMware is disabled or an instance is replaced. It returns a
+  bounded operation/event summary without provider paths, receipt IDs, or raw
+  error/activity details
+- A path-free lifecycle access endpoint reports whether one exact Studio
+  instance is disabled, read-only, armed, or expired, plus preflight readiness
+  and the bounded deadline. It also reports whether the durable target is
+  eligible, revoked, retired, or not configured; revoked/retired targets are
+  forced to disabled even if the process originally started with an armed
+  configuration. This is an operational configuration snapshot, not a Board
+  approval or proof that an action ran
+- A provider-independent smoke-check endpoint can verify the durable portion
+  of one named lifecycle session: exactly one start/suspend/resume/stop
+  operation, the required state chain, ordered timestamps, complete bounded
+  evidence, and minimum activity counts. It only reads redacted SQLite
+  evidence and returns the still-required manual proofs; a passing result does
+  not complete the Phase 1 gate
+- An idempotent startup compatibility bootstrap creates the three committed
+  Studios without adding fake employees: Kai temporarily owns Research, Mira
+  owns Content, and Rowan temporarily owns Video until versioned Phase 4
+  manager charters replace the legacy runtime profiles
 
-The current graph finishes company planning. Specialist execution is started from the Work view through the same controlled Run Broker. Automatic evidence collection, manager synthesis, reviewer Runs, and Board interrupts are later graph stages.
+The current graph finishes Studio planning. A temporary worker in the plan is
+only a bounded execution description, never a permanent Agent. Its
+Studio-attributed work-package task is owned by the manager and can be started
+through the controlled Run Broker. Actual subagent/sandbox creation, automatic
+evidence collection, manager synthesis, reviewer Runs, and Board interrupts are
+later phase gates.
 
 ### GitHub Signal Studio (V0 operating contract)
 
@@ -42,7 +124,12 @@ npm run dev:chat
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000). It connects to the local LangGraph Agent Server on `127.0.0.1:2024`, which sends Board turns to the Northstar API on `127.0.0.1:4318`. All three services bind only to loopback.
 
-Send Avery a directive in the chat. In Mock mode Avery routes it, the selected managers assign their own direct reports, and the response reports exactly which departments were engaged. A repeated delivery of the same chat message reuses its original root task and orchestration rather than duplicating work. A message containing “全公司”“三个部门” or equivalent company-wide language can use all three departments.
+Send Avery a directive in the chat. In Mock mode Avery routes it to the selected
+Studios, and each manager describes the smallest useful temporary execution
+unit without creating a new employee identity. A repeated delivery of the same
+chat message reuses its original root task and orchestration rather than
+duplicating work. A message containing “全公司”“三个工作室” or equivalent
+company-wide language can use all three Studios.
 
 For a fresh checkout, clone [langchain-ai/agent-chat-ui](https://github.com/langchain-ai/agent-chat-ui) at commit `1cbd509d387b1e9602a80f05e638058b7543d7cc` into `.upstream/agent-chat-ui`, run `pnpm install --frozen-lockfile` there, and create its `.env` with:
 
@@ -101,7 +188,8 @@ Do not commit a real `.env`. Each profile should ultimately use a secret referen
 
 ## Where Codex fits
 
-Codex is not the primary runtime for all 16 employees. Engineering agents may later request a scoped coding capability through:
+Codex is not a credential or permanent employee runtime. A Studio Manager may
+later request a scoped coding capability through:
 
 ```text
 Hermes engineering profile
@@ -110,7 +198,10 @@ Hermes engineering profile
   -> isolated Codex thread and worktree
 ```
 
-`codex login` uses ChatGPT OAuth, but that login is not a credential to distribute to 16 Hermes profiles. Hermes must never receive `auth.json`, an OAuth token, or permission to invoke Codex directly. The Codex Broker integration is designed but is not wired into this milestone.
+`codex login` uses ChatGPT OAuth, but that login is not a credential to
+distribute to Studio VMs or temporary workers. Hermes must never receive
+`auth.json`, an OAuth token, or permission to invoke Codex directly. The Codex
+Broker integration is designed but is not wired into this milestone.
 
 ## Configuration
 
@@ -121,6 +212,12 @@ Hermes engineering profile
 | `HERMES_MULTIPLEX_BASE_URL` | unset | Optional, currently unverified profile-prefixed gateway |
 | `HERMES_MULTIPLEX_API_KEY` | unset | Key paired with the optional multiplex endpoint |
 | `HERMES_POLL_INTERVAL_MS` | `500` | Runs API polling interval |
+| `VMWARE_FUSION_VMRUN_PATH` | unset | Absolute `vmrun` executable; lifecycle stays disabled when unset |
+| `VMWARE_FUSION_STUDIO_ID` | unset | The one durable Studio allowed by the Phase 1 adapter |
+| `VMWARE_FUSION_INSTANCE_ID` | unset | The one current Studio instance allowed by the adapter |
+| `VMWARE_FUSION_VMX_PATH` | unset | Exact absolute `.vmx` path already recorded on that instance |
+| `VMWARE_FUSION_ACTIONS_ARMED` | `false` | Must be exactly `true` during an explicitly approved lifecycle-action window; requires a bounded deadline |
+| `VMWARE_FUSION_ACTIONS_ARMED_UNTIL` | unset | ISO-8601 expiry required while armed; must be future and no more than 30 minutes after startup |
 | `AI_ORG_PORT` | `4318` | Northstar loopback API port |
 | `AI_ORG_DATA_DIR` | `.data` | Organization and LangGraph SQLite directory |
 | `AI_ORG_MAX_CONCURRENCY` | `2` | Maximum simultaneous employee Runs |
@@ -135,6 +232,10 @@ npm run build
 ```
 
 The tests never start Hermes, a model API, or live Codex execution.
+They also never execute `vmrun`; VMware adapter tests use an injected fake
+process runner and fake VM files. Process-boundary tests invoke only the
+current local Node executable to prove literal arguments, timeout handling,
+bounded output, and signal termination.
 
 ## Important boundaries
 
@@ -144,5 +245,11 @@ The tests never start Hermes, a model API, or live Codex execution.
 - Approval records authority but does not execute a side effect. Publishing, messaging, calendar writes, payments, and destructive connectors remain unavailable without a scoped capability gateway.
 - The Run queue is still in memory. Interrupted live Runs are not yet reconciled after restart.
 - The app is single-user and loopback-only, not a multi-tenant authenticated service.
+- VMware lifecycle is disabled by default. Its Phase 1 manual proof must follow
+  the [disposable VM smoke runbook](docs/runbooks/vmware-fusion-lifecycle-smoke.md).
+- Configuring a VMware target enables preflight and read-only observation only.
+  Start/stop/suspend/resume fail closed until the separate actions flag is
+  explicitly armed with a bounded future deadline; the application rejects
+  actions automatically when that deadline expires.
 
 See [the architecture](docs/architecture.md), the working [studio blueprint](docs/northstar-studio-blueprint.md), and the detailed [Hermes + LangGraph integration and Linux deployment design](docs/integrations/hermes-langgraph.md).

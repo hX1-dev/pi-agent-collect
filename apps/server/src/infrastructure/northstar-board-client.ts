@@ -10,10 +10,10 @@ const boardChatOutcomeSchema = z.object({
   title: z.string(),
   orchestrationId: z.string(),
   summary: z.string(),
-  departments: z.array(z.object({
-    teamName: z.string(),
+  studios: z.array(z.object({
+    studioName: z.string(),
     managerName: z.string(),
-    workerCount: z.number().int().min(1).max(4)
+    temporaryWorkerCount: z.number().int().min(0).max(4)
   })).min(1).max(3)
 });
 

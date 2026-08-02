@@ -6,10 +6,19 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
-const TEAM_KEYWORDS: Record<string, string[]> = {
-  "team-social": ["social", "content", "audience", "channel", "post", "launch", "社媒", "内容", "发布", "增长"],
-  "team-product": ["product", "code", "coding", "software", "system", "build", "api", "产品", "代码", "工程", "系统"],
-  "team-life": ["life", "calendar", "travel", "health", "habit", "plan", "生活", "日程", "旅行", "健康", "习惯"]
+const STUDIO_KEYWORDS: Record<string, string[]> = {
+  "github-research": [
+    "github", "repository", "repo", "research", "test", "code", "project",
+    "仓库", "项目", "调研", "实测", "代码"
+  ],
+  "content-marketing": [
+    "social", "content", "audience", "marketing", "script", "channel", "post",
+    "社媒", "内容", "文案", "营销", "脚本", "发布"
+  ],
+  "video-production": [
+    "video", "openmontage", "edit", "footage", "render", "colour", "color",
+    "视频", "剪辑", "素材", "渲染", "调色"
+  ]
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -26,52 +35,57 @@ function string(value: unknown, field: string): string {
 }
 
 function routeResponse(request: AgentRuntimeRequest): unknown {
-  const teams = records(request.context.teams);
-  if (teams.length === 0) throw new Error("Mock CEO needs the durable team roster");
+  const studios = records(request.context.studios);
+  if (studios.length === 0) throw new Error("Mock CEO needs the durable Studio registry");
 
-  const preferredTeamId = typeof request.context.preferredTeamId === "string"
-    ? request.context.preferredTeamId
+  const preferredStudioId = typeof request.context.preferredStudioId === "string"
+    ? request.context.preferredStudioId
     : null;
   const text = request.brief.toLowerCase();
-  const broadDirective = /(all departments|cross[- ]?company|company[- ]?wide|whole company|全公司|所有部门|全部部门|各部门|三个部门|跨部门)/i.test(text);
-  let selected = preferredTeamId
-    ? teams.filter((team) => team.id === preferredTeamId)
-    : teams.filter((team) => (TEAM_KEYWORDS[string(team.id, "team.id")] ?? []).some((keyword) => text.includes(keyword)));
+  const broadDirective = /(all studios|all departments|cross[- ]?company|company[- ]?wide|whole company|全公司|所有工作室|全部工作室|各工作室|三个工作室|所有部门|三个部门|跨部门)/i.test(text);
+  let selected = preferredStudioId
+    ? studios.filter((studio) => studio.id === preferredStudioId)
+    : studios.filter((studio) => (
+      STUDIO_KEYWORDS[string(studio.key, "studio.key")] ?? []
+    ).some((keyword) => text.includes(keyword)));
 
-  if (!preferredTeamId && broadDirective) selected = teams;
+  if (!preferredStudioId && broadDirective) selected = studios;
   if (selected.length === 0) {
-    selected = [teams.find((team) => team.id === "team-product") ?? teams[0]].filter(isRecord);
+    selected = [
+      studios.find((studio) => studio.key === "github-research") ?? studios[0]
+    ].filter(isRecord);
   }
 
   const title = request.brief.split("\n", 1)[0]?.trim() || "Board directive";
   return {
-    departments: selected.slice(0, 3).map((team) => ({
-      teamId: string(team.id, "team.id"),
-      managerAgentId: string(team.leadAgentId, "team.leadAgentId"),
-      missionTitle: `${string(team.name, "team.name")}: ${title}`.slice(0, 180),
-      missionBrief: `Own the ${string(team.name, "team.name")} contribution to this board directive. Keep the plan small, assign accountable deliverables, and return evidence.`
+    studios: selected.slice(0, 3).map((studio) => ({
+      studioId: string(studio.id, "studio.id"),
+      managerAgentId: string(studio.managerAgentId, "studio.managerAgentId"),
+      missionTitle: `${string(studio.name, "studio.name")}: ${title}`.slice(0, 180),
+      missionBrief: `Own the ${string(studio.name, "studio.name")} contribution to this board directive. Keep the plan small and return attributable evidence.`
     }))
   };
 }
 
 function planResponse(request: AgentRuntimeRequest): unknown {
-  const workers = records(request.context.workers);
-  if (workers.length === 0) throw new Error(`Mock manager ${request.agent.id} has no direct reports in context`);
+  const studio = isRecord(request.context.studio) ? request.context.studio : null;
+  if (!studio) throw new Error(`Mock manager ${request.agent.id} needs its Studio context`);
+  const studioKey = string(studio.key, "studio.key");
+  const sandboxed = studioKey === "github-research";
+  const role = sandboxed ? "Repository verification worker" : "Production workflow worker";
   return {
-    workerAssignments: workers.slice(0, 4).map((worker) => {
-      const workerName = string(worker.name, "worker.name");
-      const workerTitle = string(worker.title, "worker.title");
-      return {
-        agentId: string(worker.id, "worker.id"),
-        title: `${workerTitle} deliverable`.slice(0, 180),
-        brief: `${workerName} will produce the smallest useful ${workerTitle.toLowerCase()} contribution for “${request.brief.split("\n", 1)[0]}”.`,
+    temporaryWorkers: [{
+        key: sandboxed ? "repository-verification" : "production-workflow",
+        kind: sandboxed ? "sandbox" : "workflow",
+        role,
+        title: `${role} deliverable`.slice(0, 180),
+        brief: `Produce the smallest useful contribution for “${request.brief.split("\n", 1)[0]}” under the Studio manager's accountability.`,
         acceptanceCriteria: [
-          "The result directly addresses the assigned department mission.",
+          "The result directly addresses the assigned Studio mission.",
           "Material claims include evidence or are marked as assumptions.",
           "No external action is executed."
         ]
-      };
-    })
+      }]
   };
 }
 
